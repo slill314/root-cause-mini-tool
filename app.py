@@ -297,7 +297,7 @@ if not numeric_cols:
 # Step 2. 選分析指標欄位 (純數字欄)
 ########################################################
 step_header_small("Step 2. 選擇分析目標欄位 (純數字欄)")
-big_bold_label("請選擇欲分析之目標欄位（例如：損益、金額、報廢數量...)-左鍵雙擊欄位按鈕(會出現綠色勾勾)")
+big_bold_label("請選擇欲分析之目標欄位（例如：損益、金額、報廢數量...)")
 
 st.session_state.setdefault("target_col", None)
 st.session_state["target_col"] = pick_one_from_grid_scrollable(
@@ -335,7 +335,7 @@ internal_mode = "contribution" if "貢獻" in mode_label else "loss"
 # Step 4. 選分群欄位
 ########################################################
 step_header_small("Step 4. 選分群欄位 (如：客戶、地區、業務員...)")
-big_bold_label("請選擇要分群的欄位-左鍵雙擊欄位按鈕(會出現綠色勾勾)")
+big_bold_label("請選擇要分群的欄位")
 
 # 分群候選 = 全部欄位 - 目標指標欄位本身
 all_possible_dims = [c for c in df_clean.columns if c != target_col]
