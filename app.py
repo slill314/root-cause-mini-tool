@@ -247,7 +247,7 @@ except Exception as e:
 
 big_bold_label("請選擇要分析的工作表")
 
-chosen_sheet = st.selectbox("選擇工作表", sheet_names, index=0)
+chosen_sheet = st.selectbox("選擇工作表(下拉式選單)", sheet_names, index=0)
 
 # 切換工作表時，重置後續分析狀態，避免沿用舊欄位
 if "last_sheet" not in st.session_state:
@@ -289,8 +289,8 @@ if not numeric_cols:
 ########################################################
 # Step 2. 選分析指標欄位 (純數字欄)
 ########################################################
-step_header_small("Step 2. 選分析指標欄位 (純數字欄)")
-big_bold_label("分析目標欄位（例如：損益、金額、報廢數量...)")
+step_header_small("Step 2. 選擇分析目標欄位 (純數字欄)")
+big_bold_label("請選擇欲分析之目標欄位（例如：損益、金額、報廢數量...)-左鍵雙擊欄位按鈕(會出現綠色勾勾)")
 
 st.session_state.setdefault("target_col", None)
 st.session_state["target_col"] = pick_one_from_grid_scrollable(
@@ -304,6 +304,11 @@ if target_col is None:
     st.warning("請選一個分析指標欄位。")
     st.stop()
 
+# 🔹 Step 2 選完 target_col 後，顯示該欄位的總和
+if target_col is not None:
+    col_sum = pd.to_numeric(df_clean[target_col], errors="coerce").fillna(0).sum()
+    st.info(f"📊 `{target_col}` 欄位總合：{col_sum:,.2f}")
+
 
 ########################################################
 # Step 3. 選分析模式
@@ -313,7 +318,7 @@ big_bold_label("你想要看哪一類主因？")
 
 mode_label = st.radio(
     "",
-    ["最高貢獻 (誰佔最多)", "最大虧損 (誰最賠錢)"],
+    ["最高貢獻 (誰佔最多-contribution)", "最大虧損 (誰最賠錢-loss)"],
     horizontal=True
 )
 internal_mode = "contribution" if "貢獻" in mode_label else "loss"
@@ -323,7 +328,7 @@ internal_mode = "contribution" if "貢獻" in mode_label else "loss"
 # Step 4. 選分群欄位
 ########################################################
 step_header_small("Step 4. 選分群欄位 (如：客戶、地區、業務員...)")
-big_bold_label("請選擇要分群的欄位")
+big_bold_label("請選擇要分群的欄位-左鍵雙擊欄位按鈕(會出現綠色勾勾)")
 
 # 分群候選 = 全部欄位 - 目標指標欄位本身
 all_possible_dims = [c for c in df_clean.columns if c != target_col]
