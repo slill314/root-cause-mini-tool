@@ -219,6 +219,8 @@ st.markdown("""
 **Step 4.** 選分群欄位  
 **Step 5.** 展開明細  
 **Step 6.** 下載明細  
+**此網站不會記錄使用者上傳的檔案，也不會記憶任何資訊**
+
 """)
 
 uploaded_file = st.file_uploader(
