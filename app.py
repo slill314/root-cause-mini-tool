@@ -169,7 +169,7 @@ def pick_one_from_grid_scrollable(
     """
     chosen = current_value
 
-    # 捲軸外框
+    # 可捲動外框
     st.markdown(
         f"""
         <div style="
@@ -184,22 +184,29 @@ def pick_one_from_grid_scrollable(
         unsafe_allow_html=True
     )
 
-    # 切成多列
+    # 把選項切成多列
     rows = [options[i:i+columns_per_row] for i in range(0, len(options), columns_per_row)]
 
+    # 用 index-based key，保持穩定
+    global_idx = 0
     for r_i, row_options in enumerate(rows):
         cols = st.columns(len(row_options))
         for c_i, opt in enumerate(row_options):
-            is_selected = (opt == chosen)
-            label_text = f"✅ {opt}" if is_selected else opt
+
+            btn_key = f"{key_prefix}_{global_idx}"
+
+            # 按一下 -> 直接把 chosen 更新成該選項
             if cols[c_i].button(
-                label_text,
-                key=f"{key_prefix}_{r_i}_{c_i}_{opt}",
+                opt,
+                key=btn_key,
                 use_container_width=True
             ):
                 chosen = opt
 
+            global_idx += 1
+
     st.markdown("</div>", unsafe_allow_html=True)
+
     return chosen
 
 
