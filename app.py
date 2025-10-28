@@ -228,10 +228,11 @@ st.markdown("""
 
 step_header_small("Step 1. 上傳 Excel、選擇欲分析的工作表")
 
-uploaded_file = st.file_uploader(
-    "上傳 Excel (.xls / .xlsx / .xlsm)",
-    type=["xls", "xlsx", "xlsm"]
-)
+# 🔹 標題（粗體大字）
+big_bold_label("上傳 Excel (.xls / .xlsx / .xlsm)")
+
+# 🔹 上傳按鈕
+uploaded_file = st.file_uploader("", type=["xls", "xlsx", "xlsm"])
 if uploaded_file is None:
     st.stop()
 
