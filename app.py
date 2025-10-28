@@ -219,11 +219,11 @@ st.markdown("""
 **Step 4.** 選分群欄位  
 **Step 5.** 展開明細  
 **Step 6.** 下載明細  
-
-資安聲明:
-**此網站不會記錄使用者上傳的檔案，也不會記憶任何資訊**
-
-""")
+<br>
+<span style='color:red; font-weight:bold;'>
+資安聲明：此網站不會記錄使用者上傳的檔案，也不會記憶任何資訊
+</span>
+""", unsafe_allow_html=True)
 
 uploaded_file = st.file_uploader(
     "上傳 Excel (.xls / .xlsx / .xlsm)",
