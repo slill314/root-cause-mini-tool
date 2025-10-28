@@ -225,6 +225,9 @@ st.markdown("""
 </span>
 """, unsafe_allow_html=True)
 
+
+step_header_small("Step 1. 上傳 Excel、選擇欲分析的工作表")
+
 uploaded_file = st.file_uploader(
     "上傳 Excel (.xls / .xlsx / .xlsm)",
     type=["xls", "xlsx", "xlsm"]
@@ -240,7 +243,7 @@ except Exception as e:
     st.error(f"讀檔失敗：{e}")
     st.stop()
 
-step_header_small("Step 1. 上傳 Excel、選擇欲分析的工作表")
+
 big_bold_label("請選擇要分析的工作表")
 
 chosen_sheet = st.selectbox("選擇工作表", sheet_names, index=0)
