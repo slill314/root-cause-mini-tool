@@ -225,7 +225,6 @@ def value_color_class(val):
         return "neutral"
 
 def render_rca_tree_vertical(df_clean, target_col):
-    # The wrapper padding for each node card. This value is used in CSS calc()
     node_padding_px = 10 
     
     css = f"""
@@ -255,7 +254,7 @@ def render_rca_tree_vertical(df_clean, target_col):
         padding: 8px 10px;
         line-height: 1.3; font-size: 0.7rem; text-align: center;
         transition: all 0.2s ease; cursor: default;
-        position: relative; /* Needed for z-index to work */
+        position: relative;
         z-index: 10;
     }}
     .rca-node-name {{ font-weight: 600; font-size: 0.75rem; color: #222; margin-bottom: 4px; word-wrap: break-word; word-break: break-all; }}
@@ -265,46 +264,42 @@ def render_rca_tree_vertical(df_clean, target_col):
     .rca-node-value.neutral {{ color: #444; }}
     .rca-node-pct {{ font-size: 0.65rem; color: #666; }}
 
-    /* --- 高亮與連接線 (更穩健的版本) --- */
+    /* --- 高亮與連接線 --- */
     .rca-node-card.active-parent {{
         border-color: #007bff; border-width: 2px;
         box-shadow: 0 4px 12px rgba(0, 123, 255, 0.2);
     }}
-    /* 從高亮父節點出發的向下的線 */
     .rca-node-card.active-parent::after {{
         content: ''; position: absolute;
         left: 50%; bottom: -32px;
         transform: translateX(-50%);
         width: 2px; height: 30px;
         background-color: #007bff;
+        z-index: 1;
     }}
-    /* 每個子節點向上的線 */
     .rca-node-wrapper.is-child::before {{
         content: ''; position: absolute;
         left: 50%; top: -30px;
         transform: translateX(-50%);
         width: 2px; height: 30px;
         background-color: #007bff;
+        z-index: 1;
     }}
-    /* 水平線段 (使用 calc 和 負 margin/position 來跨越 padding) */
     .rca-node-wrapper.is-child::after {{
         content: ''; position: absolute;
         top: -30px; height: 2px; background-color: #007bff;
-        /* Default for middle nodes: stretch across the entire wrapper, including padding */
         left: -{node_padding_px}px;
         width: calc(100% + {2 * node_padding_px}px);
+        z-index: 1;
     }}
-    /* 第一個子節點的水平線只向右 */
     .rca-node-wrapper.is-child:first-child::after {{
         left: 50%;
         width: calc(50% + {node_padding_px}px);
     }}
-    /* 最後一個子節點的水平線只向左 */
     .rca-node-wrapper.is-child:last-child::after {{
         left: -{node_padding_px}px;
         width: calc(50% + {node_padding_px}px);
     }}
-    /* 只有一個子節點時，不需要水平線 */
     .rca-node-wrapper.is-child:only-child::after {{
         display: none;
     }}
@@ -408,7 +403,8 @@ def page_table_analysis():
     Step 3. 選模式（最高貢獻 / 最大虧損）  
     Step 4. 選分群欄位  
     Step 5. 展開明細  
-    Step 6. 下載明細
+    Step 6. 下載明細  
+    <br>
     <span style='color:red; font-weight:bold;'>
     資安聲明：此網站不會記錄使用者上傳的檔案，也不會記憶任何資訊
     </span>
@@ -473,7 +469,7 @@ def page_table_analysis():
     st.session_state.setdefault("target_col", None)
     st.session_state["target_col"] = pick_one_from_grid_scrollable(
         options=numeric_cols,
-        current_value=st.session_state["target_col"],
+        current_value=st.session_state.get("target_col"),
         key_prefix="targetcol_page1"
     )
     target_col = st.session_state["target_col"]
@@ -509,7 +505,7 @@ def page_table_analysis():
     st.session_state.setdefault("dim_col", None)
     st.session_state["dim_col"] = pick_one_from_grid_scrollable(
         options=all_possible_dims,
-        current_value=st.session_state["dim_col"],
+        current_value=st.session_state.get("dim_col"),
         key_prefix="dimcol_page1"
     )
     dim_col = st.session_state["dim_col"]
@@ -544,7 +540,7 @@ def page_table_analysis():
     st.session_state.setdefault("selected_val", None)
     st.session_state["selected_val"] = pick_one_from_grid_scrollable(
         options=candidate_values,
-        current_value=st.session_state["selected_val"],
+        current_value=st.session_state.get("selected_val"),
         key_prefix="valsel_page1",
         box_height_px=200
     )
@@ -610,9 +606,18 @@ def page_table_analysis():
 ########################################################
 def page_root_cause_tree():
     st.markdown("#### 🌳 根因分析樹 (垂直分解風格)")
-    st.markdown("<div style='font-size:0.8rem;color:#444;margin-bottom:0.5rem;'>上傳檔案 → 選 KPI → 從『目前最後一層』指定某個節點往下拆 → 選欄位。<span style='color:red; font-weight:bold;'>
-    資安聲明：此網站不會記錄使用者上傳的檔案，也不會記憶任何資訊
-    </span></div>", unsafe_allow_html=True)
+    
+    # MODIFICATION HERE: Added disclaimer using triple quotes
+    st.markdown("""
+        <div style='font-size:0.8rem;color:#444;margin-bottom:0.5rem;'>
+            上傳檔案 → 選 KPI → 從『目前最後一層』指定某個節點往下拆 → 選欄位。
+            <br>
+            <span style='color:red; font-weight:bold;'>
+                資安聲明：此網站不會記錄使用者上傳的檔案，也不會記憶任何資訊
+            </span>
+        </div>
+    """, unsafe_allow_html=True)
+
 
     init_rca_layers()
 
