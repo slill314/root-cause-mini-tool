@@ -408,8 +408,7 @@ def page_table_analysis():
     Step 3. 選模式（最高貢獻 / 最大虧損）  
     Step 4. 選分群欄位  
     Step 5. 展開明細  
-    Step 6. 下載明細  
-    <br>
+    Step 6. 下載明細
     <span style='color:red; font-weight:bold;'>
     資安聲明：此網站不會記錄使用者上傳的檔案，也不會記憶任何資訊
     </span>
@@ -611,7 +610,9 @@ def page_table_analysis():
 ########################################################
 def page_root_cause_tree():
     st.markdown("#### 🌳 根因分析樹 (垂直分解風格)")
-    st.markdown("<div style='font-size:0.8rem;color:#444;margin-bottom:0.5rem;'>上傳檔案 → 選 KPI → 從『目前最後一層』指定某個節點往下拆 → 選欄位。</div>", unsafe_allow_html=True)
+    st.markdown("<div style='font-size:0.8rem;color:#444;margin-bottom:0.5rem;'>上傳檔案 → 選 KPI → 從『目前最後一層』指定某個節點往下拆 → 選欄位。<span style='color:red; font-weight:bold;'>
+    資安聲明：此網站不會記錄使用者上傳的檔案，也不會記憶任何資訊
+    </span></div>", unsafe_allow_html=True)
 
     init_rca_layers()
 
