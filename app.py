@@ -870,16 +870,51 @@ def page_root_cause_tree():
     df_clean = clean_dataframe(df_raw)
 
     # KPI 欄
-    numeric_cols = get_pure_numeric_cols(df_clean)
-    if not numeric_cols:
+    all_numeric_cols = get_pure_numeric_cols(df_clean)
+    if not all_numeric_cols:
         st.error("未偵測到可完全轉成數字的欄位(例如金額/淨利/數量)。")
+        st.stop()
+
+    # MODIFICATION 3: 從數值欄位中，剔除已經被用在樹中的維度
+    used_dims_in_tree = set()
+    if "rca_layers" in st.session_state:
+        for layer in st.session_state["rca_layers"]:
+            used_dims_in_tree.add(layer["split_dim"])
+            for dim_key in layer["parent_filters"].keys():
+                used_dims_in_tree.add(dim_key)
+
+    available_kpis = [col for col in all_numeric_cols if col not in used_dims_in_tree]
+
+    if not available_kpis:
+        st.error("所有數值欄位都已被用於維度拆解，無法選擇KPI。請先清空或刪除部分樹的層級。")
         st.stop()
 
     target_col = st.selectbox(
         "請選擇要分析的 KPI (數值欄位)",
-        numeric_cols,
+        available_kpis,
         key="page2_target_col"
     )
+
+    # MODIFICATION 2: 如果KPI變了，用現有結構重算整棵樹
+    st.session_state.setdefault("page2_last_target_col", None)
+    if target_col != st.session_state.get("page2_last_target_col") and st.session_state.get("page2_last_target_col") is not None:
+        with st.spinner(f"偵測到KPI變更為 {target_col}，正在重算整棵樹..."):
+            recalculated_layers = []
+            for layer in st.session_state.get("rca_layers", []):
+                df_sub = apply_filters_to_df(df_clean, layer["parent_filters"])
+                new_groups = compute_top_groups_with_other(df_sub, target_col, layer["split_dim"], top_n=5)
+                
+                if new_groups:
+                    recalculated_layers.append({
+                        "parent_filters": layer["parent_filters"],
+                        "split_dim": layer["split_dim"],
+                        "groups": new_groups,
+                    })
+            st.session_state["rca_layers"] = recalculated_layers
+        st.toast(f"已使用新的KPI '{target_col}' 重算根因樹！")
+    
+    st.session_state["page2_last_target_col"] = target_col
+    
 
     # 可拆分的維度欄位
     all_dims = [c for c in df_clean.columns if c != target_col]
@@ -958,10 +993,12 @@ def page_root_cause_tree():
                 pf_txt = "全體" if len(pf)==0 else ", ".join([f"{k}={v}" for k,v in pf.items()])
                 layer_labels.append(f"{i}. 父條件[{pf_txt}] → 拆分欄位:{lyr['split_dim']}")
 
+            # MODIFICATION 1: 預設為最後一個選項
             sel_layer_to_remove = st.selectbox(
                 "選擇要刪除的層：",
                 options=layer_labels,
-                key="rca_remove_layer_select"
+                key="rca_remove_layer_select",
+                index=len(layer_labels) - 1
             )
 
             if st.button("🗑 刪除此層"):
