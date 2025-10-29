@@ -679,7 +679,7 @@ def page_root_cause_tree():
         if not ranked_dims:
             st.info("在這個節點下，沒有更多可拆的欄位。")
         else:
-            sel_split_dim = st.selectbox("下一層要用哪個欄位分解？", options=ranked_dims, key="rca_split_dim_select")
+            sel_split_dim = st.selectbox("下一層要用哪個欄位分解？(依變異程度降冪排列)", options=ranked_dims, key="rca_split_dim_select")
             if st.button("➕ 加到樹裡 (展開下一層)"):
                 add_new_layer(df_clean, target_col, parent_filters, sel_split_dim)
                 st.rerun()
