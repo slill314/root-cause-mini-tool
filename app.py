@@ -17,14 +17,11 @@ ERROR_TOKENS = [
 ]
 
 def normalize_cell_value(v):
-    """空白 / Error / #DIV/0! 等 → 0，其它保留原值"""
-    if pd.isna(v):
-        return 0
+    if pd.isna(v): return 0
     if isinstance(v, str):
         vs = v.strip()
         for bad in ERROR_TOKENS:
-            if vs == bad or vs.upper() == bad.upper():
-                return 0
+            if vs.upper() == bad.upper(): return 0
         return v
     return v
 
@@ -35,78 +32,42 @@ def clean_dataframe(df: pd.DataFrame):
     return df_clean
 
 def can_be_all_numeric_after_clean(series: pd.Series):
-    """判斷整欄(補0後)是否都能轉數字"""
     def normalize_numeric_like(x):
-        if isinstance(x, str):
-            return x.replace(",", "").strip()
+        if isinstance(x, str): return x.replace(",", "").strip()
         return x
     normalized = series.apply(normalize_numeric_like)
     numeric_series = pd.to_numeric(normalized, errors="coerce")
-    all_numeric = not numeric_series.isna().any()
-    return all_numeric, numeric_series.astype(float)
+    return not numeric_series.isna().any()
 
 def get_pure_numeric_cols(df_clean: pd.DataFrame):
-    """找可完全轉成數字的欄位"""
-    numeric_cols = []
-    for col in df_clean.columns:
-        all_num, _ = can_be_all_numeric_after_clean(df_clean[col])
-        if all_num:
-            numeric_cols.append(col)
-    return numeric_cols
+    return [col for col in df_clean.columns if can_be_all_numeric_after_clean(df_clean[col])]
 
 def summarize_by_dimension(df_clean, target_col, dim_col, mode, top_n=5):
-    """
-    用在第一頁(表格分析)
-    mode:
-      - contribution: 最高貢獻
-      - loss: 最大虧損(負值)
-    """
-    total_value = df_clean[target_col].astype(float).sum()
-    group_sum = (
-        df_clean.groupby(dim_col)[target_col]
-        .apply(lambda s: pd.to_numeric(s, errors="coerce").fillna(0).sum())
-    )
+    total_value = pd.to_numeric(df_clean[target_col], errors="coerce").fillna(0).sum()
+    group_sum = df_clean.groupby(dim_col)[target_col].apply(lambda s: pd.to_numeric(s, errors="coerce").fillna(0).sum())
 
-    if mode == "contribution":
-        ordered = group_sum.sort_values(ascending=False)
-    elif mode == "loss":
-        ordered = group_sum.reindex(group_sum.sort_values(key=lambda x: x.abs(), ascending=False).index)
-    else:
-        ordered = group_sum
-
+    if mode == "contribution": ordered = group_sum.sort_values(ascending=False)
+    else: ordered = group_sum.reindex(group_sum.abs().sort_values(ascending=False).index)
+    
     top_only = ordered.head(top_n)
     other_only = ordered.iloc[top_n:]
-
     main_rows = top_only.reset_index()
     main_rows.columns = [dim_col, target_col]
+    main_rows["pct_of_total_%"] = (main_rows[target_col] / total_value * 100).round(2) if total_value != 0 else 0.0
 
-    main_rows["pct_of_total_%"] = (
-        main_rows[target_col] / total_value * 100
-    ).round(2) if total_value != 0 else 0.0
-
-    if len(other_only) > 0:
+    if not other_only.empty:
         other_sum = other_only.sum()
         other_pct = (other_sum / total_value * 100).round(2) if total_value != 0 else 0.0
-        other_row = pd.DataFrame([{
-            dim_col: "其他",
-            target_col: other_sum,
-            "pct_of_total_%": other_pct
-        }])
+        other_row = pd.DataFrame([{"dim_col": "其他", target_col: other_sum, "pct_of_total_%": other_pct}])
+        other_row.rename(columns={"dim_col": dim_col}, inplace=True)
         main_rows = pd.concat([main_rows, other_row], ignore_index=True)
-
     return main_rows, total_value
 
-
-def filter_df_by_dim_value(df_clean: pd.DataFrame,
-                           dim_col: str,
-                           dim_value,
-                           cols_show=None):
+def filter_df_by_dim_value(df_clean: pd.DataFrame, dim_col: str, dim_value, cols_show=None):
     mask = df_clean[dim_col].astype(str) == str(dim_value)
-    sub = df_clean[mask].copy()
-    if cols_show is not None:
-        sub = sub[cols_show]
+    sub = df_clean.loc[mask].copy()
+    if cols_show: return sub[cols_show]
     return sub
-
 
 ########################################################
 # 1. 根因分析樹 計算邏輯
@@ -115,104 +76,86 @@ def filter_df_by_dim_value(df_clean: pd.DataFrame,
 def apply_filters_to_df(df, filters: dict):
     sub = df.copy()
     for col_name, col_val in filters.items():
-        if col_val == "__ALL__":
-            continue
-        sub = sub[sub[col_name].astype(str) == str(col_val)]
+        if col_val != "__ALL__":
+            sub = sub[sub[col_name].astype(str) == str(col_val)]
     return sub
 
 def compute_top_groups_with_other(df_sub, target_col, split_dim, top_n=5):
     total_here = pd.to_numeric(df_sub[target_col], errors="coerce").fillna(0).sum()
-    grp = (
-        df_sub.groupby(split_dim)[target_col]
-        .apply(lambda s: pd.to_numeric(s, errors="coerce").fillna(0).sum())
-    )
-    if grp.empty:
-        return []
+    grp = df_sub.groupby(split_dim)[target_col].apply(lambda s: pd.to_numeric(s, errors="coerce").fillna(0).sum())
+    if grp.empty: return []
 
     grp_sorted = grp.reindex(grp.abs().sort_values(ascending=False).index)
     top_grp = grp_sorted.head(top_n)
     other_grp = grp_sorted.iloc[top_n:]
-
     rows = []
     for gval, ksum in top_grp.items():
-        pct = 0.0 if total_here == 0 else (ksum / total_here * 100.0)
-        rows.append({ "label": str(gval), "kpi_sum": float(ksum), "pct": float(pct), "filters": {split_dim: str(gval)}, "is_other": False })
-
-    if len(other_grp) > 0:
+        pct = (ksum / total_here * 100.0) if total_here != 0 else 0.0
+        rows.append({"label": str(gval), "kpi_sum": float(ksum), "pct": pct})
+    if not other_grp.empty:
         other_sum = other_grp.sum()
-        other_pct = 0.0 if total_here == 0 else (other_sum / total_here * 100.0)
-        rows.append({ "label": "其他", "kpi_sum": float(other_sum), "pct": float(other_pct), "filters": {split_dim: "(其他)"}, "is_other": True })
+        other_pct = (other_sum / total_here * 100.0) if total_here != 0 else 0.0
+        rows.append({"label": "其他", "kpi_sum": float(other_sum), "pct": other_pct})
     return rows
 
 def compute_dimension_spread(df_sub, target_col, dim_col):
-    grp_series = (
-        df_sub.groupby(dim_col)[target_col]
-        .apply(lambda s: pd.to_numeric(s, errors="coerce").fillna(0).sum())
-    )
-    if grp_series.empty:
-        return 0.0
+    grp_series = df_sub.groupby(dim_col)[target_col].apply(lambda s: pd.to_numeric(s, errors="coerce").fillna(0).sum())
+    if grp_series.empty: return 0.0
     return float(abs(grp_series.max() - grp_series.min()))
 
 def rank_candidate_dims(df_sub, target_col, all_dims, used_dims):
-    scored = []
-    for dim in all_dims:
-        if dim == target_col or dim in used_dims:
-            continue
-        spread = compute_dimension_spread(df_sub, target_col, dim)
-        scored.append((dim, spread))
+    scored = [(dim, compute_dimension_spread(df_sub, target_col, dim)) for dim in all_dims if dim != target_col and dim not in used_dims]
     scored.sort(key=lambda x: x[1], reverse=True)
     return [d for d, _ in scored]
 
 ########################################################
-# 2. 樹的 state (rca_layers) + 我們的新邏輯：單一路徑下鑽
+# 2. 樹的 state 管理
 ########################################################
 
 def init_rca_layers():
-    if "rca_layers" not in st.session_state:
-        st.session_state["rca_layers"] = []
+    if "rca_layers" not in st.session_state: st.session_state["rca_layers"] = []
 
 def build_parent_candidates_from_tail():
-    if len(st.session_state.get("rca_layers", [])) == 0:
-        return [("全體 (無條件)", {})]
+    if not st.session_state.get("rca_layers", []): return [("全體 (無條件)", {})]
     
     tail = st.session_state["rca_layers"][-1]
-    tail_parent_filters = tail["parent_filters"]
-    split_dim = tail["split_dim"]
-
     out = []
     for g in tail["groups"]:
-        fdict = tail_parent_filters.copy()
-        fdict[split_dim] = g["label"]
+        fdict = tail["parent_filters"].copy()
+        fdict[tail["split_dim"]] = g["label"]
         label_txt = ", ".join([f"{k}={v}" for k, v in fdict.items()])
         out.append((label_txt, fdict))
-
-    unique_map = {tuple(sorted(fdict.items())): (lab, fdict) for lab, fdict in out}
-    return list(unique_map.values())
+    return list({tuple(sorted(fdict.items())): (lab, fdict) for lab, fdict in out}.values())
 
 def add_new_layer(df_clean, target_col, parent_filters, split_dim, top_n=5):
-    valid_candidates = build_parent_candidates_from_tail()
-    valid_filter_sets = [tuple(sorted(f.items())) for _, f in valid_candidates]
-    if tuple(sorted(parent_filters.items())) not in valid_filter_sets:
-        return
+    valid_filter_sets = [tuple(sorted(f.items())) for _, f in build_parent_candidates_from_tail()]
+    if tuple(sorted(parent_filters.items())) not in valid_filter_sets: return
 
     df_sub = apply_filters_to_df(df_clean, parent_filters)
     groups = compute_top_groups_with_other(df_sub, target_col, split_dim, top_n=top_n)
-    if not groups:
-        return
-
-    st.session_state["rca_layers"].append({
-        "parent_filters": parent_filters.copy(),
-        "split_dim": split_dim,
-        "groups": groups,
-    })
+    if groups:
+        st.session_state["rca_layers"].append({"parent_filters": parent_filters, "split_dim": split_dim, "groups": groups})
 
 def remove_layer_by_index(idx_to_remove: int):
     if 0 <= idx_to_remove < len(st.session_state.get("rca_layers", [])):
         st.session_state["rca_layers"] = st.session_state["rca_layers"][:idx_to_remove]
 
+# ==================== OPTIMIZATION 1: CACHING DATA LOADING ====================
+@st.cache_data
+def load_and_clean_data(uploaded_file):
+    """Reads and cleans the uploaded Excel file. This function is cached."""
+    try:
+        df_raw = pd.read_excel(uploaded_file, sheet_name=0, header=0)
+        if df_raw.columns.duplicated().any() or any(col is None or str(col).strip() == "" for col in df_raw.columns):
+            return None, "表頭有重複或空白的欄位名稱，請修正後再上傳。"
+        df_clean = clean_dataframe(df_raw)
+        return df_clean, None
+    except Exception as e:
+        return None, f"讀檔失敗：{e}"
+# ==============================================================================
 
 ########################################################
-# 2B. 將樹渲染為垂直分解佈局的 HTML/CSS
+# 2B. 樹的 HTML/CSS 渲染
 ########################################################
 
 def value_color_class(val):
@@ -221,12 +164,12 @@ def value_color_class(val):
         if v < 0: return "bad"
         if v > 0: return "good"
         return "neutral"
-    except (ValueError, TypeError):
-        return "neutral"
+    except (ValueError, TypeError): return "neutral"
 
 def render_rca_tree_vertical(df_clean, target_col):
-    node_padding_px = 10 
-    
+    node_padding_px = 10
+    css = f"""<style> ... </style>""" # Your existing CSS
+    # ... (The rest of your render_rca_tree_vertical function remains the same)
     css = f"""
     <style>
     .rca-vertical-container {{
@@ -264,7 +207,6 @@ def render_rca_tree_vertical(df_clean, target_col):
     .rca-node-value.neutral {{ color: #444; }}
     .rca-node-pct {{ font-size: 0.65rem; color: #666; }}
 
-    /* --- 高亮與連接線 --- */
     .rca-node-card.active-parent {{
         border-color: #007bff; border-width: 2px;
         box-shadow: 0 4px 12px rgba(0, 123, 255, 0.2);
@@ -300,66 +242,55 @@ def render_rca_tree_vertical(df_clean, target_col):
         left: -{node_padding_px}px;
         width: calc(50% + {node_padding_px}px);
     }}
-    .rca-node-wrapper.is-child:only-child::after {{
-        display: none;
-    }}
+    .rca-node-wrapper.is-child:only-child::after {{ display: none; }}
     </style>
     """
-    
     html_rows = []
-    
     active_path_names = [target_col]
     layers = st.session_state.get("rca_layers", [])
     for i, current_layer in enumerate(layers):
         if i + 1 < len(layers):
             next_layer = layers[i+1]
             choice_made = next_layer["parent_filters"].get(current_layer["split_dim"])
-            if choice_made:
-                active_path_names.append(choice_made)
+            if choice_made: active_path_names.append(choice_made)
 
     full_total = pd.to_numeric(df_clean[target_col], errors="coerce").fillna(0).sum()
     is_root_active = len(layers) > 0
     root_active_class = "active-parent" if is_root_active else ""
-    
-    root_html = '<div class="rca-level-row">'
-    root_html += '<div class="level-title-wrapper">'
-    root_html += '<div class="level-title">ROOT KPI</div><div class="level-subtitle">全體資料</div>'
-    root_html += f'<div class="rca-node-wrapper"><div class="rca-node-card {root_active_class}">'
-    root_html += f'<div class="rca-node-name">{target_col}</div>'
-    root_html += f'<div class="rca-node-value {value_color_class(full_total)}">{full_total:,.2f}</div>'
-    root_html += f'<div class="rca-node-pct">100.00%</div>'
-    root_html += '</div></div></div></div>'
+    root_html = f'''<div class="rca-level-row">
+        <div class="level-title-wrapper">
+            <div class="level-title">ROOT KPI</div><div class="level-subtitle">全體資料</div>
+            <div class="rca-node-wrapper"><div class="rca-node-card {root_active_class}">
+                <div class="rca-node-name">{target_col}</div>
+                <div class="rca-node-value {value_color_class(full_total)}">{full_total:,.2f}</div>
+                <div class="rca-node-pct">100.00%</div>
+            </div></div>
+        </div></div>'''
     html_rows.append(root_html)
 
     df_parent = df_clean
     for i, layer in enumerate(layers):
         parent_total = pd.to_numeric(df_parent[target_col], errors="coerce").fillna(0).sum()
         pf_str = ", ".join([f"{k}={v}" for k, v in layer["parent_filters"].items()])
-        
-        children_wrapper = '<div class="level-title-wrapper">'
-        children_wrapper += f'<div class="level-title">拆分欄位：{layer["split_dim"]}</div>'
-        children_wrapper += f'<div class="level-subtitle">父條件: {pf_str}</div>'
+        children_wrapper = f'''<div class="level-title-wrapper">
+            <div class="level-title">拆分欄位：{layer["split_dim"]}</div>
+            <div class="level-subtitle">父條件: {pf_str}</div>'''
         
         is_last_layer = (i == len(layers) - 1)
-        
         children_cards_html = '<div class="rca-level-row">'
         for g in layer["groups"]:
-            pct_parent = 0.0 if parent_total == 0 else (g["kpi_sum"] / parent_total * 100.0)
-            
+            pct_parent = (g["kpi_sum"] / parent_total * 100.0) if parent_total != 0 else 0.0
             is_active_parent = not is_last_layer and g["label"] == active_path_names[i+1]
             active_class = "active-parent" if is_active_parent else ""
-
-            children_cards_html += '<div class="rca-node-wrapper is-child">'
-            children_cards_html += f'<div class="rca-node-card {active_class}">'
-            children_cards_html += f'<div class="rca-node-name">{g["label"]}</div>'
-            children_cards_html += f'<div class="rca-node-value {value_color_class(g["kpi_sum"])}">{g["kpi_sum"]:,.2f}</div>'
-            children_cards_html += f'<div class="rca-node-pct">{pct_parent:.2f}%</div>'
-            children_cards_html += '</div></div>'
-        
+            children_cards_html += f'''<div class="rca-node-wrapper is-child">
+                <div class="rca-node-card {active_class}">
+                    <div class="rca-node-name">{g["label"]}</div>
+                    <div class="rca-node-value {value_color_class(g["kpi_sum"])}">{g["kpi_sum"]:,.2f}</div>
+                    <div class="rca-node-pct">{pct_parent:.2f}%</div>
+                </div></div>'''
         children_cards_html += '</div>'
         children_wrapper += children_cards_html + '</div>'
         html_rows.append(children_wrapper)
-        
         df_parent = apply_filters_to_df(df_clean, layer["parent_filters"])
 
     return css + f'<div class="rca-vertical-container">{"".join(html_rows)}</div>'
@@ -381,18 +312,15 @@ def pick_one_from_grid_scrollable(options, current_value, key_prefix, columns_pe
     for r_i, row_options in enumerate(rows):
         cols = st.columns(len(row_options))
         for c_i, opt in enumerate(row_options):
-            if cols[c_i].button(opt, key=f"{key_prefix}_{r_i}_{c_i}", use_container_width=True):
-                chosen = opt
+            if cols[c_i].button(opt, key=f"{key_prefix}_{r_i}_{c_i}", use_container_width=True): chosen = opt
     st.markdown("</div>", unsafe_allow_html=True)
     return chosen
 
 ########################################################
 # 4. 第一頁：Excel表格分析 (使用者提供版本)
 ########################################################
-
 def page_table_analysis():
     st.title("📊 Excel表格分析小工具")
-
     st.markdown("""
     ### 📘 使用說明
     流程：  
@@ -412,202 +340,99 @@ def page_table_analysis():
 
     step_header_small("Step 1. 上傳 Excel、選擇欲分析的工作表")
     big_bold_label("上傳 Excel (.xls / .xlsx / .xlsm)")
-
     uploaded_file = st.file_uploader("", type=["xls","xlsx","xlsm"], key="page1_uploader")
-    if uploaded_file is None:
-        st.stop()
+    if uploaded_file is None: st.stop()
 
     try:
         xls = pd.ExcelFile(uploaded_file)
         sheet_names = xls.sheet_names
     except Exception as e:
-        st.error(f"讀檔失敗：{e}")
-        st.stop()
+        st.error(f"讀檔失敗：{e}"); st.stop()
 
     big_bold_label("請選擇要分析的工作表")
-    chosen_sheet = st.selectbox(
-        "選擇工作表(下拉式選單)",
-        sheet_names,
-        index=0,
-        key="page1_sheet"
-    )
-
-    if "page1_last_sheet" not in st.session_state:
-        st.session_state["page1_last_sheet"] = chosen_sheet
+    chosen_sheet = st.selectbox("選擇工作表(下拉式選單)", sheet_names, index=0, key="page1_sheet")
+    
+    # ... (Rest of your page_table_analysis function is identical to what you provided)
+    if "page1_last_sheet" not in st.session_state: st.session_state["page1_last_sheet"] = chosen_sheet
     if chosen_sheet != st.session_state["page1_last_sheet"]:
         for k in ["target_col", "dim_col", "selected_val"]:
-            if k in st.session_state:
-                del st.session_state[k]
+            if k in st.session_state: del st.session_state[k]
         st.session_state["page1_last_sheet"] = chosen_sheet
 
     try:
         raw_df = pd.read_excel(uploaded_file, sheet_name=chosen_sheet, header=0)
     except Exception as e:
-        st.error(f"讀取工作表失敗：{e}")
-        st.stop()
+        st.error(f"讀取工作表失敗：{e}"); st.stop()
 
-    if raw_df.columns.duplicated().any():
-        st.error("表頭有重複欄位名稱，請修正後再上傳。")
-        st.stop()
-    if any(col is None or str(col).strip()=="" for col in raw_df.columns):
-        st.error("有欄位名稱是空白，請補齊後再上傳。")
-        st.stop()
+    if raw_df.columns.duplicated().any(): st.error("表頭有重複欄位名稱，請修正後再上傳。"); st.stop()
+    if any(col is None or str(col).strip()=="" for col in raw_df.columns): st.error("有欄位名稱是空白，請補齊後再上傳。"); st.stop()
 
     st.success(f"✅ 成功讀取工作表：{chosen_sheet}，共 {raw_df.shape[0]} 列 × {raw_df.shape[1]} 欄")
-
     df_clean = clean_dataframe(raw_df)
-
     numeric_cols = get_pure_numeric_cols(df_clean)
-    if not numeric_cols:
-        st.error("未偵測到可完全轉成數字的欄位，請確認表格中有金額/數量欄位。")
-        st.stop()
-
-    # Step2 目標欄位
+    if not numeric_cols: st.error("未偵測到可完全轉成數字的欄位，請確認表格中有金額/數量欄位。"); st.stop()
+    
     step_header_small("Step 2. 選擇分析目標欄位 (純數字欄)")
     big_bold_label("請選擇欲分析之目標欄位（例如：損益、金額、報廢數量...)")
-
     st.session_state.setdefault("target_col", None)
-    st.session_state["target_col"] = pick_one_from_grid_scrollable(
-        options=numeric_cols,
-        current_value=st.session_state.get("target_col"),
-        key_prefix="targetcol_page1"
-    )
-    target_col = st.session_state["target_col"]
-
-    if target_col is None:
-        st.warning("請選一個分析指標欄位。")
-        st.stop()
+    target_col = pick_one_from_grid_scrollable(numeric_cols, st.session_state.get("target_col"), "targetcol_page1")
+    st.session_state["target_col"] = target_col
+    if target_col is None: st.warning("請選一個分析指標欄位。"); st.stop()
 
     col_sum = pd.to_numeric(df_clean[target_col], errors="coerce").fillna(0).sum()
     st.info(f"📊 `{target_col}` 欄位總合：{col_sum:,.2f}")
 
-    # Step3 模式
     step_header_small("Step 3. 選分析模式")
     big_bold_label("你想要看哪一類主因？")
-
-    mode_label = st.radio(
-        "",
-        ["最高貢獻 (誰佔最多-contribution)", "最大虧損 (誰最賠錢-loss)"],
-        horizontal=True,
-        key="page1_mode"
-    )
+    mode_label = st.radio("", ["最高貢獻 (誰佔最多-contribution)", "最大虧損 (誰最賠錢-loss)"], horizontal=True, key="page1_mode")
     internal_mode = "contribution" if "貢獻" in mode_label else "loss"
 
-    # Step4 分群欄位
     step_header_small("Step 4. 選分群欄位 (如：客戶、地區、業務員...)")
     big_bold_label("請選擇要分群的欄位")
-
     all_possible_dims = [c for c in df_clean.columns if c != target_col]
-    if not all_possible_dims:
-        st.error("無可用分群欄位。")
-        st.stop()
-
+    if not all_possible_dims: st.error("無可用分群欄位。"); st.stop()
+    
     st.session_state.setdefault("dim_col", None)
-    st.session_state["dim_col"] = pick_one_from_grid_scrollable(
-        options=all_possible_dims,
-        current_value=st.session_state.get("dim_col"),
-        key_prefix="dimcol_page1"
-    )
-    dim_col = st.session_state["dim_col"]
+    dim_col = pick_one_from_grid_scrollable(all_possible_dims, st.session_state.get("dim_col"), "dimcol_page1")
+    st.session_state["dim_col"] = dim_col
+    if dim_col is None: st.warning("請先選擇分群欄位。"); st.stop()
 
-    if dim_col is None:
-        st.warning("請先選擇分群欄位。")
-        st.stop()
+    summary_df, total_value = summarize_by_dimension(df_clean, target_col, dim_col, internal_mode)
+    if summary_df.empty: st.warning("沒有資料可用來計算(例如沒有負數)。"); st.stop()
 
-    # Step5 展開明細
-    summary_df, total_value = summarize_by_dimension(
-        df_clean,
-        target_col,
-        dim_col,
-        internal_mode
-    )
-    if summary_df.empty:
-        st.warning("沒有資料可用來計算(例如沒有負數)。")
-        st.stop()
-
-    if internal_mode == "contribution":
-        st.write(f"依「{dim_col}」分組後，`{target_col}` 最大的 Top 5：")
-    else:
-        st.write(f"依「{dim_col}」分組後，最賠錢的 Top 5：")
-
+    if internal_mode == "contribution": st.write(f"依「{dim_col}」分組後，`{target_col}` 最大的 Top 5：")
+    else: st.write(f"依「{dim_col}」分組後，最賠錢的 Top 5：")
     st.dataframe(summary_df)
 
     step_header_small("Step 5. 展開明細")
     big_bold_label(f"請選一個『{dim_col}』的值檢視明細")
-
     candidate_values = summary_df[dim_col].astype(str).tolist()
-
     st.session_state.setdefault("selected_val", None)
-    st.session_state["selected_val"] = pick_one_from_grid_scrollable(
-        options=candidate_values,
-        current_value=st.session_state.get("selected_val"),
-        key_prefix="valsel_page1",
-        box_height_px=200
-    )
-    selected_val = st.session_state["selected_val"]
-
-    if selected_val is None:
-        st.warning("請先選一個群組值。")
-        st.stop()
-
+    selected_val = pick_one_from_grid_scrollable(candidate_values, st.session_state.get("selected_val"), "valsel_page1", box_height_px=200)
+    st.session_state["selected_val"] = selected_val
+    if selected_val is None: st.warning("請先選一個群組值。"); st.stop()
+    
     detail_df = filter_df_by_dim_value(df_clean, dim_col, selected_val)
-
     group_sum = pd.to_numeric(detail_df[target_col], errors="coerce").fillna(0).sum()
     pct = (group_sum / total_value * 100) if total_value != 0 else 0
-
     st.markdown(f"**目前檢視：** {dim_col} = {selected_val}")
     st.markdown(f"**{target_col} 合計：** {group_sum:.2f}（占比 {pct:.2f}%）")
-
     st.dataframe(detail_df)
 
-    # Step6 匯出
     step_header_small("Step 6. 下載明細")
     big_bold_label("匯出這次分析結果（Excel）")
-
-    metadata = pd.DataFrame([{
-        "timestamp_utc": datetime.utcnow().isoformat(),
-        "source_file": uploaded_file.name,
-        "sheet": chosen_sheet,
-        "target_col": target_col,
-        "mode": internal_mode,
-        "dim_col": dim_col,
-        "selected_val": selected_val,
-        "group_sum": group_sum,
-        "pct_of_total(%)": pct,
-    }])
-
+    metadata = pd.DataFrame([{"timestamp_utc": datetime.utcnow().isoformat(), "source_file": uploaded_file.name, "sheet": chosen_sheet, "target_col": target_col, "mode": internal_mode, "dim_col": dim_col, "selected_val": selected_val, "group_sum": group_sum, "pct_of_total(%)": pct}])
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-        sheet_name = "分析結果"
-        metadata.to_excel(
-            writer,
-            sheet_name=sheet_name,
-            startrow=0,
-            index=False
-        )
-
-        start_row = len(metadata) + 2
-        detail_df.to_excel(
-            writer,
-            sheet_name=sheet_name,
-            startrow=start_row,
-            index=False
-        )
-
-    st.download_button(
-        label="⬇ 下載 Excel 明細",
-        data=output.getvalue(),
-        file_name=f"分析結果_{datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+        metadata.to_excel(writer, sheet_name="分析結果", startrow=0, index=False)
+        detail_df.to_excel(writer, sheet_name="分析結果", startrow=len(metadata) + 2, index=False)
+    st.download_button(label="⬇ 下載 Excel 明細", data=output.getvalue(), file_name=f"分析結果_{datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 ########################################################
-# 5. 第二頁：SmartArt風格 根因分析樹
+# 5. 第二頁：根因分析樹
 ########################################################
 def page_root_cause_tree():
     st.markdown("#### 🌳 根因分析樹 (垂直分解風格)")
-    
-    # MODIFICATION HERE: Added disclaimer using triple quotes
     st.markdown("""
         <div style='font-size:0.8rem;color:#444;margin-bottom:0.5rem;'>
             上傳檔案 → 選 KPI → 從『目前最後一層』指定某個節點往下拆 → 選欄位。
@@ -618,33 +443,23 @@ def page_root_cause_tree():
         </div>
     """, unsafe_allow_html=True)
 
-
     init_rca_layers()
 
     uploaded_file = st.file_uploader("上傳 Excel (.xls / .xlsx / .xlsm) (此頁只讀第一個工作表)", type=["xls","xlsx","xlsm"], key="page2_uploader")
     if uploaded_file is None: st.stop()
 
-    try:
-        df_raw = pd.read_excel(uploaded_file, sheet_name=0, header=0)
-    except Exception as e:
-        st.error(f"讀檔失敗：{e}")
+    # --- Use the cached function ---
+    df_clean, error_message = load_and_clean_data(uploaded_file)
+    if error_message:
+        st.error(error_message)
         st.stop()
     
-    if df_raw.columns.duplicated().any() or any(col is None or str(col).strip()=="" for col in df_raw.columns):
-        st.error("表頭有重複或空白的欄位名稱，請修正後再上傳。")
-        st.stop()
-
-    df_clean = clean_dataframe(df_raw)
     all_numeric_cols = get_pure_numeric_cols(df_clean)
-    if not all_numeric_cols:
-        st.error("未偵測到可完全轉成數字的欄位。")
-        st.stop()
+    if not all_numeric_cols: st.error("未偵測到可完全轉成數字的欄位。"); st.stop()
 
     used_dims_in_tree = {layer["split_dim"] for layer in st.session_state.get("rca_layers", [])}
     available_kpis = [col for col in all_numeric_cols if col not in used_dims_in_tree]
-    if not available_kpis:
-        st.error("所有數值欄位都已被用於維度拆解，無法選擇KPI。")
-        st.stop()
+    if not available_kpis: st.error("所有數值欄位都已被用於維度拆解，無法選擇KPI。"); st.stop()
 
     target_col = st.selectbox("請選擇要分析的 KPI (數值欄位)", available_kpis, key="page2_target_col")
 
@@ -654,8 +469,7 @@ def page_root_cause_tree():
             for layer in st.session_state.get("rca_layers", []):
                 df_sub = apply_filters_to_df(df_clean, layer["parent_filters"])
                 new_groups = compute_top_groups_with_other(df_sub, target_col, layer["split_dim"], top_n=5)
-                if new_groups:
-                    recalculated_layers.append({**layer, "groups": new_groups})
+                if new_groups: recalculated_layers.append({**layer, "groups": new_groups})
             st.session_state["rca_layers"] = recalculated_layers
         st.toast(f"已使用新的KPI '{target_col}' 重算根因樹！")
     st.session_state["page2_last_target_col"] = target_col
@@ -665,32 +479,25 @@ def page_root_cause_tree():
 
     with side_col:
         st.markdown("<div style='font-size:0.9rem;font-weight:600;margin-bottom:0.5rem;border-bottom:1px solid #ccc;'>展開 / 維護樹</div>", unsafe_allow_html=True)
-        
         parent_choices = build_parent_candidates_from_tail()
         parent_labels = [lab for lab, _ in parent_choices]
         sel_parent_label = st.selectbox("我要在哪個節點下面新增下一層？", options=parent_labels, key="rca_parent_select")
         parent_filters = next((fdict for lab, fdict in parent_choices if lab == sel_parent_label), {})
-
         df_parent_sub = apply_filters_to_df(df_clean, parent_filters)
         used_dims_here = {lyr["split_dim"] for lyr in st.session_state.get("rca_layers", []) if lyr["parent_filters"] == parent_filters}
-        
         ranked_dims = rank_candidate_dims(df_parent_sub, target_col, all_dims, used_dims_here)
-
         if not ranked_dims:
             st.info("在這個節點下，沒有更多可拆的欄位。")
         else:
-            sel_split_dim = st.selectbox("下一層要用哪個欄位分解？(依變異程度降冪排列)", options=ranked_dims, key="rca_split_dim_select")
+            sel_split_dim = st.selectbox("下一層要用哪個欄位分解？(已依離散程度降冪排序)", options=ranked_dims, key="rca_split_dim_select")
             if st.button("➕ 加到樹裡 (展開下一層)"):
                 add_new_layer(df_clean, target_col, parent_filters, sel_split_dim)
                 st.rerun()
 
         st.markdown("<div style='font-size:0.9rem;font-weight:600;margin:1rem 0 0.5rem;border-bottom:1px solid #ccc;'>刪除某層拆解</div>", unsafe_allow_html=True)
-        
         if st.session_state.get("rca_layers"):
             layer_labels = [f"{i}. 父[{('全體' if not lyr['parent_filters'] else ', '.join(lyr['parent_filters'].values()))}] → 拆分:[{lyr['split_dim']}]" for i, lyr in enumerate(st.session_state["rca_layers"])]
-            
             sel_layer_to_remove_label = st.selectbox("選擇要刪除的層 (將移除此層及其後的所有層)：", options=layer_labels, index=len(layer_labels) - 1, key="rca_remove_layer_select")
-            
             if st.button("🗑 刪除此層"):
                 idx_to_remove = layer_labels.index(sel_layer_to_remove_label)
                 remove_layer_by_index(idx_to_remove)
